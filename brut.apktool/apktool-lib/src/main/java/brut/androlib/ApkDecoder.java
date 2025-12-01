@@ -191,7 +191,7 @@ public class ApkDecoder {
         LOGGER.info("Baksmaling " + fileName + "...");
         SmaliDecoder decoder = new SmaliDecoder(mApkFile, fileName,
             mConfig.isBaksmaliDebugMode(), mConfig.getBaksmaliApiLevel());
-        DexFile dexFile = decoder.decode(smaliDir);
+        DexFile dexFile = decoder.decode(smaliDir, outDir);
 
         // record minSdkVersion for jars
         int minSdkVersion = dexFile.getOpcodes().api;

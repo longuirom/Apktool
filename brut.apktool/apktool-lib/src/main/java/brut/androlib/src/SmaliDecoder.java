@@ -17,6 +17,7 @@
 package brut.androlib.src;
 
 import brut.androlib.exceptions.AndrolibException;
+import brut.util.OSDetection;
 import com.android.tools.smali.baksmali.Baksmali;
 import com.android.tools.smali.baksmali.BaksmaliOptions;
 import com.android.tools.smali.dexlib2.DexFileFactory;
@@ -26,8 +27,12 @@ import com.android.tools.smali.dexlib2.dexbacked.DexBackedOdexFile;
 import com.android.tools.smali.dexlib2.analysis.InlineMethodResolver;
 import com.android.tools.smali.dexlib2.iface.DexFile;
 import com.android.tools.smali.dexlib2.iface.MultiDexContainer;
+import com.android.tools.smali.dexlib2.util.SyntheticAccessorResolver;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Objects;
 
 public class SmaliDecoder {
     private final File mApkFile;
@@ -42,7 +47,7 @@ public class SmaliDecoder {
         mApiLevel = apiLevel;
     }
 
-    public DexFile decode(File outDir) throws AndrolibException {
+    public DexFile decode(File outDir, File outDirOnly) throws AndrolibException {
         try {
             BaksmaliOptions options = new BaksmaliOptions();
 
@@ -94,7 +99,66 @@ public class SmaliDecoder {
                         InlineMethodResolver.createInlineMethodResolver(((DexBackedOdexFile) dexFile).getOdexVersion());
             }
 
-            Baksmali.disassembleDexFile(dexFile, outDir, jobs, options);
+            MultiDexContainer<? extends DexBackedDexFile> newCheckDexContainer = dexEntry.getContainer();
+            List<String> entryNames;
+            try {
+                entryNames = container.getDexEntryNames();
+            } catch (IOException e) {
+                System.err.println("Error reading container entries: " + e.getMessage());
+                System.exit(1);
+                return dexFile;
+            }
+
+
+            byte[] magic = dexFile.getBuffer().readByteRange(0, 8);
+            String magicStr = new String(magic, StandardCharsets.US_ASCII);
+
+            if (magicStr.equals("dex\n041\0")) {
+                int indexLoop = 0;
+
+                for (String entryName : entryNames) {
+                    MultiDexContainer.DexEntry<? extends DexBackedDexFile> entry;
+                    try {
+                        entry = newCheckDexContainer.getEntry(entryName);
+                    } catch (IOException e) {
+                        System.err.println("Failed to read " + entryName + ": " + e.getMessage());
+                        continue;
+                    }
+                    if (entry == null) continue;
+
+                    // System.out.println("out: " + outDir);
+
+                    if (!outDir.exists() && !outDir.mkdirs()) {
+                        System.err.println("Cannot create directory: " + outDir);
+                        System.exit(1);
+                    }
+
+                    if (options.accessorComments) {
+                        options.syntheticAccessorResolver = new SyntheticAccessorResolver(entry.getDexFile().getOpcodes(), entry.getDexFile().getClasses());
+                    }
+
+                    indexLoop++;
+                    String basePath = outDirOnly.getAbsolutePath();
+                    String newOutDirName = (indexLoop == 1)
+                        ? "smali"
+                        : "smali_classes" + indexLoop;
+
+                    File newOutDir = new File(basePath, newOutDirName);
+                    if (entryNames.size() > 1 &&
+                        newOutDir.exists() &&
+                        newOutDir.isDirectory() &&
+                        Objects.requireNonNull(newOutDir.list()).length > 0) {
+
+                        throw new AndrolibException("Duplicate smali directory: " + newOutDir);
+                    }
+
+
+                    Baksmali.disassembleDexFile(entry.getDexFile(), newOutDir, jobs, options);
+                }
+
+            } else {
+                Baksmali.disassembleDexFile(dexFile, outDir, jobs, options);
+            }
 
             return dexFile;
         } catch (IOException ex) {
